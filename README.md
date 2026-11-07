@@ -1,163 +1,191 @@
-# PVDF-Based Mechanical Stress Detection and GPS Emergency Alert System
+# PVDF Stress-Triggered GPS Emergency Alert System
 
-An ESP32-based emergency alert system integrating a PVDF piezoelectric sensor, GPS positioning, and GSM communication to detect significant mechanical stress and transmit location-based emergency notifications.
+A portable, ESP32-based safety device that detects significant mechanical stress using a **PVDF piezoelectric sensor**, then automatically sends an SMS containing the wearer's GPS location (as a Google Maps link) to predefined emergency contacts. A manual SOS button provides a backup trigger.
 
-## Overview
+> **Status:** Work in progress. Hardware integration, signal conditioning, threshold calibration and event validation are still being tested.
 
-This project aims to develop a portable emergency alert system capable of detecting significant mechanical deformation using a piezoelectric polymer and automatically initiating an emergency notification.
+---
 
-The system uses **Polyvinylidene Fluoride (PVDF)**, a piezoelectric polymer with the repeating chemical unit:
+## Table of Contents
 
-\[
-(CH_2-CF_2)_n
-\]
+- [How It Works](#how-it-works)
+- [Features](#features)
+- [Hardware](#hardware)
+- [Pin Mapping](#pin-mapping)
+- [System Architecture](#system-architecture)
+- [Getting Started](#getting-started)
+- [Calibration and Testing](#calibration-and-testing)
+- [Power Design](#power-design)
+- [Known Limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [License](#license)
 
-When subjected to mechanical deformation, PVDF generates an electrical charge. A signal-conditioning and detection circuit processes this electrical response and provides a trigger signal to the ESP32.
+---
 
-The ESP32 then obtains the latest available geographical coordinates from a GPS module and instructs a GSM modem to send an emergency SMS containing a Google Maps location link to predefined emergency contacts.
+## How It Works
 
-## Key Features
+PVDF (polyvinylidene fluoride) is a piezoelectric polymer with the repeating unit:
 
-- PVDF-based mechanical stress detection
-- Electrical signal detection and threshold-based triggering
-- ESP32-based embedded processing
-- GPS-based geographical positioning
-- GSM-based emergency SMS notifications
-- Google Maps location sharing
-- Rechargeable lithium-ion battery power supply
-- LED and buzzer status indicators
-- Modular hardware and software architecture
+$$
+(\mathrm{CH_2{-}CF_2})_n
+$$
 
-## Hardware Components
+When it bends or is compressed, it generates a small electrical charge. This project conditions that signal, lets the ESP32 decide whether it represents a genuine high-stress event, and, if so, fires off an alert.
 
-| Component | Purpose |
+```
+PVDF film → Signal conditioning → ESP32 ADC → Event validation
+                                                    │
+                      SOS button ───────────────────┤
+                                                    ▼
+                                  Latest GPS fix (NEO-6M, UART/NMEA)
+                                                    ▼
+                                  SMS via GSM modem (UART/AT commands)
+                                                    ▼
+                         Emergency contacts get a Google Maps link
+```
+
+**Event flow**
+
+1. Mechanical deformation produces a charge/voltage response in the PVDF film.
+2. A high-impedance conditioning stage scales and buffers the signal for the ESP32.
+3. The ESP32 checks for threshold crossings and validates the event to reject noise.
+4. The device retrieves the most recent valid GPS fix.
+5. The GSM modem sends an SMS to every configured contact.
+6. The LED and buzzer report the system state.
+
+The SOS button bypasses the sensor and triggers the same alert path directly.
+
+---
+
+## Features
+
+- PVDF-based mechanical stress detection with threshold triggering
+- Event validation to reduce false alarms
+- GPS positioning with Google Maps link in the SMS
+- GSM SMS alerts to multiple predefined contacts
+- Manual SOS button
+- LED and buzzer status feedback
+- Rechargeable single-cell Li-ion power
+- Modular hardware and firmware design
+
+---
+
+## Hardware
+
+| Component | Role |
 |---|---|
-| ESP32-WROOM-32 | Main microcontroller |
-| PVDF piezoelectric polymer | Mechanical deformation sensing |
-| Signal-conditioning circuit | Processes the PVDF electrical output |
-| Current/voltage detection circuit | Monitors the generated electrical signal, depending on the sensing design |
-| NEO-6M GPS module | Obtains geographical coordinates |
-| SIM800L GSM module | Sends emergency SMS notifications |
-| 18650 Li-ion battery | Portable power supply |
-| Li-ion charging module | Battery charging |
-| Push button | Manual SOS activation |
-| LED | Visual status indication |
-| Buzzer | Audio feedback |
+| ESP32-WROOM-32 | Main controller |
+| PVDF piezo film | Mechanical deformation sensor |
+| Op-amp signal-conditioning circuit | Buffers and scales the PVDF output |
+| NEO-6M GPS module | Location data (UART, NMEA) |
+| SIM800L GSM module | SMS transmission (UART, AT commands) |
+| 18650 Li-ion cell + charging module | Portable power |
+| Push button | Manual SOS |
+| LED + buzzer | Status indication |
 
-*Component selection and signal-conditioning circuitry may change during development.*
+*Components and conditioning circuitry may change as development continues.*
+
+---
+
+## Pin Mapping
+
+*Suggested defaults. Update these to match your wiring.*
+
+| Signal | ESP32 pin | Interface |
+|---|---|---|
+| PVDF conditioned output | GPIO 34 (ADC1) | Analog in |
+| GPS TX → ESP32 RX | GPIO 16 | UART2 |
+| GPS RX ← ESP32 TX | GPIO 17 | UART2 |
+| GSM TX → ESP32 RX | GPIO 26 | UART1 (remapped) |
+| GSM RX ← ESP32 TX | GPIO 25 | UART1 (remapped) |
+| SOS button | GPIO 27 | Digital in (pull-up) |
+| Status LED | GPIO 2 | Digital out |
+| Buzzer | GPIO 4 | Digital out |
+
+---
 
 ## System Architecture
 
-The system consists of four major subsystems:
+### 1. Piezoelectric stress detection
+PVDF has very high output impedance, so it needs a high-impedance buffer or charge amplifier before it reaches the ADC. The conditioned signal is biased to mid-rail so both positive and negative deformation can be read.
 
-### 1. Piezoelectric Stress Detection
+### 2. ESP32 processing
+The ESP32 samples the sensor, filters noise, validates events, handles the SOS button, reads GPS data, drives the GSM modem and controls the indicators.
 
-The PVDF polymer undergoes mechanical deformation when external stress is applied.
+### 3. GPS positioning
+The NEO-6M streams NMEA sentences over UART. The firmware parses them with TinyGPSPlus and keeps the latest valid fix along with its age.
 
-Due to its piezoelectric properties, this deformation produces an electrical charge and corresponding voltage response.
+### 4. GSM communication
+The SIM800L is driven with AT commands. On a confirmed event the ESP32 sends:
 
-The generated signal is processed by a suitable high-impedance signal-conditioning circuit. The ESP32 monitors the resulting signal and identifies significant threshold crossings.
+```
+EMERGENCY ALERT! Possible distress detected.
+Location: https://maps.google.com/?q=LATITUDE,LONGITUDE
+```
 
-### 2. ESP32 Processing
+---
 
-The ESP32 acts as the central controller.
+## Getting Started
 
-Its responsibilities include:
+**Requirements**
 
-- Monitoring the piezoelectric sensor signal.
-- Detecting significant mechanical events.
-- Filtering noise and rejecting insignificant signals.
-- Handling manual SOS activation.
-- Retrieving GPS coordinates.
-- Controlling the GSM modem.
-- Managing system status indicators.
+- Arduino IDE with the ESP32 board package
+- [TinyGPSPlus](https://github.com/mikalhart/TinyGPSPlus) library
+- An active SIM card on a network the GSM module supports
 
-### 3. GPS Positioning
+**Steps**
 
-The NEO-6M GPS module receives satellite signals and provides geographical coordinates through UART communication using NMEA data.
+1. Wire the hardware according to the pin table above.
+2. Open the firmware sketch in Arduino IDE and select **ESP32 Dev Module**.
+3. Set your emergency contact numbers and detection threshold in the config section of the sketch.
+4. Upload, then open the Serial Monitor at 115200 baud to confirm sensor readings, GPS fix and GSM registration.
 
-The ESP32 retrieves the latest valid location whenever an emergency event is detected.
+---
 
-### 4. GSM Emergency Communication
+## Calibration and Testing
 
-The SIM800L modem communicates with the ESP32 through UART using AT commands.
+- Log raw ADC values over serial while flexing the sensor in its final mounting.
+- Set the threshold above normal walking and handling noise but below a genuine high-stress event.
+- Test with the GSM SMS function disabled first, using only the buzzer and serial log, to count false triggers.
+- Test GPS outdoors with clear sky before relying on location data.
 
-When an emergency event is confirmed, the ESP32 sends an SMS containing the emergency notification and geographical coordinates.
+---
 
-Example location link:
+## Power Design
 
-`https://maps.google.com/?q=LATITUDE,LONGITUDE`
+- A single 18650 cell powers the system through a charging/protection module and suitable regulation.
+- The GSM modem needs a dedicated supply path that handles transmit current peaks of up to about 2 A, with a large bulk capacitor close to the module.
+- Energy from the PVDF film is used only as a **sensing signal**. It is not enough to power the ESP32 or GSM modem.
 
-## Working Principle
+---
 
-1. The PVDF piezoelectric polymer is subjected to mechanical deformation.
-2. Mechanical stress produces an electrical response in the polymer.
-3. The signal-conditioning circuit processes the generated electrical signal.
-4. The ESP32 detects whether the signal exceeds a predefined threshold.
-5. The system applies event validation to reduce false triggering.
-6. The ESP32 retrieves the latest valid GPS coordinates.
-7. The GSM modem sends an emergency SMS to predefined contacts.
-8. The LED and buzzer indicate the system response.
+## Known Limitations
 
-A manual SOS button can also activate the emergency notification independently of the piezoelectric sensor.
+- PVDF output depends on deformation, film geometry, mounting and material properties.
+- Vibration and electrical noise can cause false triggers.
+- GPS may not get a fix indoors, and a cold start can take minutes.
+- SMS delivery depends on network coverage and is not guaranteed or acknowledged.
+- The SIM800L is a **2G-only** module, which many networks have shut down or are phasing out.
+- A flat battery disables the device.
+- Mechanical stress alone cannot identify every kind of emergency.
 
-## Communication Interfaces
+---
 
-| Connection | Interface |
-|---|---|
-| PVDF detection circuit → ESP32 | ADC / GPIO |
-| GPS → ESP32 | UART / NMEA |
-| ESP32 → GSM | UART / AT Commands |
-| SOS Button → ESP32 | GPIO |
-| LED / Buzzer → ESP32 | GPIO |
+## Roadmap
 
-## Software Requirements
+- [ ] Improved PVDF signal conditioning (charge amplifier, input protection)
+- [ ] Adaptive thresholding and better noise filtering
+- [ ] Cancel window with buzzer countdown before sending
+- [ ] Accelerometer-based fall detection
+- [ ] Multiple PVDF sensors
+- [ ] Battery monitoring and low-power / deep-sleep mode
+- [ ] LTE module (replacing 2G GSM)
+- [ ] Live location tracking
+- [ ] Machine-learning event classification
+- [ ] Custom PCB and 3D-printed enclosure
 
-- Arduino IDE
-- ESP32 board package
-- TinyGPSPlus library
-- ESP32-WROOM development board
-- Compatible SIM card and cellular network
-
-## Power Management
-
-The system uses a rechargeable single-cell lithium-ion battery.
-
-The battery supplies the ESP32 and peripheral modules through appropriate voltage regulation.
-
-The GSM modem requires a dedicated supply capable of handling its high transmission-current peaks.
-
-The PVDF-generated electrical energy is treated as a sensing signal or potential harvested energy. It is not assumed to power the ESP32 or GSM modem directly.
-
-## Limitations
-
-- PVDF output depends on mechanical deformation, sensor geometry, mounting, and material properties.
-- Electrical noise and environmental vibrations can cause false triggers.
-- GPS positioning may be unavailable indoors.
-- SMS transmission depends on cellular network availability.
-- SIM800L requires a compatible 2G GSM network.
-- Battery depletion can disable the system.
-- SMS submission does not guarantee successful delivery or recipient acknowledgement.
-- Mechanical stress detection alone cannot reliably identify every type of emergency.
-
-## Future Improvements
-
-- Improved PVDF signal-conditioning circuitry.
-- Adaptive stress detection and noise filtering.
-- Multiple PVDF sensors for improved event detection.
-- Machine-learning-based mechanical event classification.
-- Accelerometer-based fall detection.
-- Battery monitoring and low-power operation.
-- Live location tracking.
-- Improved cellular connectivity using LTE modules.
-- Compact custom PCB and 3D-printed enclosure.
-
-## Project Status
-
-Development in progress.
-
-Hardware integration, signal conditioning, threshold calibration, and emergency event validation are subject to testing.
+---
 
 ## License
 
-MIT License.
+Released under the [MIT License](LICENSE).
